@@ -215,6 +215,7 @@ class Game:
                 self.place_town(self.local_map)
 
             # Place dungeon entrances if any
+            cell_data = self.world_map[cell_y][cell_x]
             for dungeon_pos in cell_data.get('dungeons', []):
                 x, y = dungeon_pos
                 self.local_map[y][x] = 'DUNGEON_ENTRANCE'
@@ -276,12 +277,16 @@ class Game:
             # Determine time of day
             time_of_day = self.get_time_of_day()
 
-            if cell_data['town']:
-                # Spawn villagers during the day
-                if time_of_day == 'day':
-                    self.spawn_villagers(self.local_map)
+            if self.state == 'dungeon':
+                # Do not spawn villagers in the dungeon
+                self.spawn_dungeon_enemies()
             else:
-                self.spawn_enemies(self.local_map, time_of_day)
+                if cell_data['town']:
+                    # Spawn villagers during the day
+                    if time_of_day == 'day':
+                        self.spawn_villagers(self.local_map)
+                else:
+                    self.spawn_enemies(self.local_map, time_of_day)
 
             # Save the new cell's state
             self.world_cells[cell_key] = {
@@ -566,10 +571,10 @@ class Game:
             if self.state == 'dungeon':
                 self.move_player_dungeon(dx, dy)
             else:
-                # Move the player if the tile is walkable
                 self.move_player(dx, dy)
             # Move entities after player moves
             self.move_entities()
+
 
     
     def move_player_dungeon(self, dx, dy):
@@ -590,14 +595,20 @@ class Game:
                     if self.dungeon_level > self.max_dungeon_level:
                         self.exit_dungeon()
                     else:
+                        self.events.append(f'Descending to dungeon level {self.dungeon_level}')
+                        self.generate_dungeon_level(self.dungeon_level)
+                elif tile_type == 'STAIRS_UP':
+                    if self.dungeon_level == 1:
+                        self.exit_dungeon()
+                    else:
+                        self.dungeon_level -= 1
+                        self.events.append(f'Ascending to dungeon level {self.dungeon_level}')
                         self.generate_dungeon_level(self.dungeon_level)
                 elif tile_type == 'CHEST':
                     self.open_chest(new_x, new_y)
             else:
                 self.events.append(f'Cannot walk into {tile["name"]}')
 
-                if tile_type == 'CHEST':
-                    self.open_chest(new_x, new_y)
 
     def open_chest(self, x, y):
         # Randomly decide the loot
@@ -631,12 +642,15 @@ class Game:
 
 
     def exit_dungeon(self):
-        self.events.append('You have reached the end of the dungeon.')
-        # Transition to boss map or exit back to the world map
+        self.events.append('You have exited the dungeon.')
         self.state = 'local_map'
-        # Return to the dungeon entrance location
+        # Restore player's position to the dungeon entrance on the local map
         self.player_x, self.player_y = self.dungeon_entrance_position
-        # Restore local map, entities, etc.
+        # Restore the local map and other necessary variables
+        self.local_map = self.world_cells[self.current_cell]['local_map']
+        self.enemies = self.world_cells[self.current_cell]['enemies']
+        self.villagers = self.world_cells[self.current_cell]['villagers']
+
 
     def spawn_dungeon_enemies(self):
         num_enemies = random.randint(5, 10)
@@ -691,7 +705,13 @@ class Game:
         if tile['walkable']:
             self.player_x = new_x
             self.player_y = new_y
-            self.events.append(f'Moved to {tile["name"]}')
+            #self.events.append(f'Moved to {tile["name"]}')-------------------------Debug
+
+            # Handle interactions with special tiles
+            if tile_type == 'DUNGEON_ENTRANCE':
+                self.enter_dungeon()
+            elif tile_type == 'BUILDING_ENTRANCE':
+                self.enter_building()
             # Handle interactions with enemies, items, etc.
         else:
             self.events.append(f'Cannot walk into {tile["name"]}')
@@ -701,6 +721,8 @@ class Game:
         self.dungeon_level = 1
         self.max_dungeon_level = random.randint(2, 5)
         self.dungeon_maps = {}
+        # Save the player's position before entering the dungeon
+        self.dungeon_entrance_position = (self.player_x, self.player_y)
         self.generate_dungeon_level(self.dungeon_level)
         self.state = 'dungeon'
 
@@ -721,8 +743,10 @@ class Game:
 
             # Place stairs if not last level
             if level < self.max_dungeon_level:
-                stair_x, stair_y = self.place_stairs()
-                self.local_map[stair_y][stair_x] = 'STAIRS_DOWN'
+                self.place_stairs()
+            else:
+                # Optionally, place an exit or boss here
+                pass
 
             # Save the dungeon level
             self.dungeon_maps[level] = {
@@ -731,7 +755,15 @@ class Game:
                 'player_y': self.player_y,
                 'enemies': self.enemies,
             }
-
+        if level > 1:
+            # Place stairs up on levels beyond the first
+            stair_up_x, stair_up_y = self.place_feature_in_random_room('STAIRS_UP')
+            # Set player position at stairs up
+            self.player_x, self.player_y = stair_up_x, stair_up_y
+        else:
+            # For the first level, set player position at entrance
+            self.player_x, self.player_y = self.place_feature_in_random_room('ENTRANCE')
+            # Optionally, mark this tile differently if needed
 
     def create_dungeon_map(self):
         dungeon_map = [['WALL' for _ in range(LOCAL_MAP_WIDTH)] for _ in range(LOCAL_MAP_HEIGHT)]
@@ -775,8 +807,6 @@ class Game:
             if self.local_map[y][x] == 'FLOOR':
                 self.local_map[y][x] = 'CHEST'
 
-
-
     def create_room(self, dungeon_map, room):
         for x in range(room.x1 + 1, room.x2):
             for y in range(room.y1 + 1, room.y2):
@@ -791,21 +821,32 @@ class Game:
             dungeon_map[y][x] = 'FLOOR'
 
     def find_start_position(self):
+        # Find the position of the entrance tile
+        for y in range(LOCAL_MAP_HEIGHT):
+            for x in range(LOCAL_MAP_WIDTH):
+                if self.local_map[y][x] == 'ENTRANCE':
+                    return x, y
+        # Fallback to any floor tile
         for y in range(LOCAL_MAP_HEIGHT):
             for x in range(LOCAL_MAP_WIDTH):
                 if self.local_map[y][x] == 'FLOOR':
                     return x, y
-        # Fallback if no floor found
+        # Default to center
         return LOCAL_MAP_WIDTH // 2, LOCAL_MAP_HEIGHT // 2
 
     def place_stairs(self):
-        # Choose a random room to place the stairs
+        # Place stairs down in a random room
+        stair_down_x, stair_down_y = self.place_feature_in_random_room('STAIRS_DOWN')
+        # Optionally, place stairs up if needed
+        if self.dungeon_level > 1:
+            stair_up_x, stair_up_y = self.place_feature_in_random_room('STAIRS_UP')
+
+    def place_feature_in_random_room(self, feature):
         room = random.choice(self.rooms)
         x = random.randint(room.x1 + 1, room.x2 - 1)
         y = random.randint(room.y1 + 1, room.y2 - 1)
-        self.local_map[y][x] = 'STAIRS_DOWN'
+        self.local_map[y][x] = feature
         return x, y
-
 
     def leave_region(self, dx, dy):
         # Determine new cell coordinates

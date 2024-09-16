@@ -59,6 +59,9 @@ TILES = {
     'WALL': {'char': '#', 'color': (100, 100, 100), 'walkable': False, 'name': 'Wall'},
     'STAIRS_DOWN': {'char': '\u25BC', 'color': GREEN, 'walkable': True, 'name': 'Stairs Down'},
     'CHEST': {'char': 'C', 'color': YELLOW, 'walkable': True, 'name': 'Chest'},
+    'STAIRS_UP': {'char': '\u25B2', 'color': GREEN, 'walkable': True, 'name': 'Stairs Up'},
+    'ENTRANCE': {'char': '>', 'color': WHITE, 'walkable': True, 'name': 'Entrance'},
+    'BUILDING_ENTRANCE': {'char': '+', 'color': BROWN, 'walkable': True, 'name': 'Building Entrance'},
 }
 
 BIOMES = ['PLAIN', 'FOREST', 'MOUNTAIN', 'DESERT', 'WATER']
