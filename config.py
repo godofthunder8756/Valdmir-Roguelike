@@ -54,6 +54,11 @@ TILES = {
     'HOUSE_WALL': {'char': '#', 'color': (150, 75, 0), 'walkable': False, 'name': 'Wall'},
     'HOUSE_FLOOR': {'char': '.', 'color': (210, 180, 140), 'walkable': True, 'name': 'Floor'},
     'DOOR': {'char': '+', 'color': YELLOW, 'walkable': True, 'name': 'Door'},
+    'DUNGEON_ENTRANCE': {'char': '+', 'color': GRAY, 'walkable': True, 'name': 'Dungeon Entrance'},
+    'FLOOR': {'char': '.', 'color': (150, 150, 150), 'walkable': True, 'name': 'Floor'},
+    'WALL': {'char': '#', 'color': (100, 100, 100), 'walkable': False, 'name': 'Wall'},
+    'STAIRS_DOWN': {'char': '\u25BC', 'color': GREEN, 'walkable': True, 'name': 'Stairs Down'},
+    'CHEST': {'char': 'C', 'color': YELLOW, 'walkable': True, 'name': 'Chest'},
 }
 
 BIOMES = ['PLAIN', 'FOREST', 'MOUNTAIN', 'DESERT', 'WATER']
@@ -122,3 +127,26 @@ ITEM_PRICES = {
     'Shield': 40,
     'Magic Ring': 100,
 }
+
+class Rect:
+    def __init__(self, x, y, w, h):
+        self.x1 = x
+        self.y1 = y
+        self.x2 = x + w
+        self.y2 = y + h
+
+    def center_x(self):
+        return (self.x1 + self.x2) // 2
+
+    def center_y(self):
+        return (self.y1 + self.y2) // 2
+
+    def intersect(self, other):
+        return (self.x1 <= other.x2 and self.x2 >= other.x1 and
+                self.y1 <= other.y2 and self.y2 >= other.y1)
+    
+# Helper function for drawing text
+def draw_text(surface, text, x, y, color=WHITE, font_size=FONT_SIZE, font_name=FONT_NAME):
+    font = pygame.font.SysFont(font_name, font_size)
+    text_surface = font.render(text, True, color)
+    surface.blit(text_surface, (x, y))

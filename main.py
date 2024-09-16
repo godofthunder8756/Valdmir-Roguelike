@@ -131,7 +131,7 @@ class Game:
         self.hud_visible = True  # New variable to track HUD visibility
 
     def generate_world_map(self):
-        world_map = [[{'biome': 'PLAIN', 'town': False} for _ in range(WORLD_MAP_WIDTH)] for _ in range(WORLD_MAP_HEIGHT)]
+        world_map = [[{'biome': 'PLAIN', 'town': False, 'dungeons': [], 'name': None} for _ in range(WORLD_MAP_WIDTH)] for _ in range(WORLD_MAP_HEIGHT)]
 
         # Scatter blobs of other biomes
         num_blobs = 60  # Increased number for larger map
@@ -149,9 +149,23 @@ class Game:
             town_y = random.randint(0, WORLD_MAP_HEIGHT - 1)
             world_map[town_y][town_x]['town'] = True
 
-        return world_map
+        # Place dungeons
+        for y in range(WORLD_MAP_HEIGHT):
+            for x in range(WORLD_MAP_WIDTH):
+                if random.random() < 0.5:
+                    num_dungeons = random.randint(1, 3)
+                    dungeon_positions = []
+                    for _ in range(num_dungeons):
+                        dungeon_positions.append(self.random_dungeon_position())
+                    world_map[y][x]['dungeons'] = dungeon_positions
 
         return world_map
+
+    def random_dungeon_position(self):
+        # Return a random position within the local map bounds
+        x = random.randint(5, LOCAL_MAP_WIDTH - 6)  # Avoid edges
+        y = random.randint(5, LOCAL_MAP_HEIGHT - 6)
+        return (x, y)
 
     def create_biome_blob(self, world_map, x, y, size, biome):
         cells_to_fill = [(x, y)]
@@ -179,7 +193,6 @@ class Game:
             self.enemies = cell_data['enemies']
             self.villagers = cell_data['villagers']
             self.local_map_biome = cell_data['biome']
-            self.current_cell = cell_key
             return self.local_map
         else:
             # Generate new local map
@@ -188,16 +201,23 @@ class Game:
             biome = cell_data['biome']
             self.local_map_biome = biome
 
+            # Initialize the local map here
+            self.local_map = [[None for _ in range(LOCAL_MAP_WIDTH)] for _ in range(LOCAL_MAP_HEIGHT)]
+
             # Generate the local map based on the biome
-            local_map = [[None for _ in range(LOCAL_MAP_WIDTH)] for _ in range(LOCAL_MAP_HEIGHT)]
             for y in range(LOCAL_MAP_HEIGHT):
                 for x in range(LOCAL_MAP_WIDTH):
                     tile = self.generate_tile(biome)
-                    local_map[y][x] = tile
+                    self.local_map[y][x] = tile
 
             # Optionally, add features based on whether the cell contains a town
             if cell_data['town']:
-                self.place_town(local_map)
+                self.place_town(self.local_map)
+
+            # Place dungeon entrances if any
+            for dungeon_pos in cell_data.get('dungeons', []):
+                x, y = dungeon_pos
+                self.local_map[y][x] = 'DUNGEON_ENTRANCE'
 
             # Set player's position based on entrance direction
             if entrance_direction is None:
@@ -223,39 +243,27 @@ class Game:
                     self.player_x = LOCAL_MAP_WIDTH // 2
                     self.player_y = LOCAL_MAP_HEIGHT // 2
 
-            # For 'WATER' biome, make the map mostly water, except the entrance edge
-            if biome == 'WATER':
-                for y in range(LOCAL_MAP_HEIGHT):
-                    for x in range(LOCAL_MAP_WIDTH):
-                        local_map[y][x] = 'WATER'
-                # Make entrance edge walkable
-                if entrance_direction == 'left':
-                    for y in range(LOCAL_MAP_HEIGHT):
-                        local_map[y][0] = 'PLAIN'
-                elif entrance_direction == 'right':
-                    for y in range(LOCAL_MAP_HEIGHT):
-                        local_map[y][LOCAL_MAP_WIDTH - 1] = 'PLAIN'
-                elif entrance_direction == 'up':
-                    for x in range(LOCAL_MAP_WIDTH):
-                        local_map[0][x] = 'PLAIN'
-                elif entrance_direction == 'down':
-                    for x in range(LOCAL_MAP_WIDTH):
-                        local_map[LOCAL_MAP_HEIGHT - 1][x] = 'PLAIN'
-                else:
-                    # Default to center
-                    local_map[self.player_y][self.player_x] = 'PLAIN'
-
             # Ensure player's starting position is walkable
             attempts = 0
             max_attempts = LOCAL_MAP_WIDTH * LOCAL_MAP_HEIGHT
             while True:
-                tile = local_map[self.player_y][self.player_x]
+                tile = self.local_map[self.player_y][self.player_x]
                 if TILES[tile]['walkable']:
                     break
                 else:
                     # Adjust position if not walkable
-                    self.player_x = random.randint(0, LOCAL_MAP_WIDTH - 1)
-                    self.player_y = random.randint(0, LOCAL_MAP_HEIGHT - 1)
+                    if entrance_direction == 'left':
+                        self.player_x += 1
+                    elif entrance_direction == 'right':
+                        self.player_x -= 1
+                    elif entrance_direction == 'up':
+                        self.player_y += 1
+                    elif entrance_direction == 'down':
+                        self.player_y -= 1
+                    else:
+                        # Random position
+                        self.player_x = random.randint(0, LOCAL_MAP_WIDTH - 1)
+                        self.player_y = random.randint(0, LOCAL_MAP_HEIGHT - 1)
                     attempts += 1
                     if attempts > max_attempts:
                         # No walkable tile found
@@ -271,12 +279,11 @@ class Game:
             if cell_data['town']:
                 # Spawn villagers during the day
                 if time_of_day == 'day':
-                    self.spawn_villagers(local_map)
+                    self.spawn_villagers(self.local_map)
             else:
-                self.spawn_enemies(local_map, time_of_day)
+                self.spawn_enemies(self.local_map, time_of_day)
 
             # Save the new cell's state
-            self.local_map = local_map
             self.world_cells[cell_key] = {
                 'local_map': self.local_map,
                 'player_x': self.player_x,
@@ -285,11 +292,8 @@ class Game:
                 'villagers': self.villagers,
                 'biome': self.local_map_biome,
             }
-            self.current_cell = cell_key
             return self.local_map
 
-
-    
 
     def spawn_villagers(self, local_map):
         num_villagers = random.randint(3, 6)
@@ -450,10 +454,11 @@ class Game:
                         elif self.state == 'map_mode':
                             self.state = 'local_map'
 
-                    if self.state == 'world_map' or self.state == 'map_mode':
+                    if self.state in ('world_map', 'map_mode'):
                         self.handle_world_map_events(event)
-                    elif self.state == 'local_map':
+                    elif self.state in ('local_map', 'dungeon'):
                         self.handle_local_map_events(event, keys)
+
     
     def handle_command_input(self, event):
         if event.key == pygame.K_RETURN:
@@ -466,20 +471,43 @@ class Game:
             self.command_input += event.unicode
 
     def process_command(self, command):
-        if command.lower() == 'time':
+        command = command.lower()
+        if command == 'time':
             current_hour = int(self.time // 60)
             current_minute = int(self.time % 60)
             time_str = f'{current_hour:02d}:{current_minute:02d}'
             self.events.append(f'Current time: {time_str}')
-        elif command.lower() == 'fullscreen':
+        elif command == 'fullscreen':
             pygame.display.toggle_fullscreen()
             self.events.append('Toggled fullscreen mode.')
-        elif command.lower() == 'hud':
+        elif command == 'hud':
             self.hud_visible = not self.hud_visible
             state = 'shown' if self.hud_visible else 'hidden'
             self.events.append(f'HUD is now {state}.')
+        elif command == 'regioninfo':
+            self.display_region_info()
         else:
             self.events.append(f'Unknown command: {command}')
+
+    def display_region_info(self):
+        cell_x, cell_y = self.current_cell
+        cell_data = self.world_map[cell_y][cell_x]
+        biome = cell_data.get('biome', 'Unknown')
+        has_town = cell_data.get('town', False)
+        dungeons = cell_data.get('dungeons', [])
+        has_dungeon = len(dungeons) > 0
+        region_name = cell_data.get('name', 'Unknown')  # Name is null for now
+
+        info_lines = [
+            f"Region Info:",
+            f" Biome: {biome}",
+            f" Has Town: {'Yes' if has_town else 'No'}",
+            f" Has Dungeon: {'Yes' if has_dungeon else 'No'}",
+            f" Name: {region_name}",
+        ]
+        for line in info_lines:
+            self.events.append(line)
+
 
     def handle_world_map_events(self, event):
         if event.key == pygame.K_RETURN and self.state == 'world_map':
@@ -535,10 +563,92 @@ class Game:
             elif event.key == pygame.K_d:
                 dx = 1
 
-            # Move the player if the tile is walkable
-            self.move_player(dx, dy)
+            if self.state == 'dungeon':
+                self.move_player_dungeon(dx, dy)
+            else:
+                # Move the player if the tile is walkable
+                self.move_player(dx, dy)
             # Move entities after player moves
             self.move_entities()
+
+    
+    def move_player_dungeon(self, dx, dy):
+        new_x = self.player_x + dx
+        new_y = self.player_y + dy
+
+        if 0 <= new_x < len(self.local_map[0]) and 0 <= new_y < len(self.local_map):
+            tile_type = self.local_map[new_y][new_x]
+            tile = TILES.get(tile_type, TILES['FLOOR'])
+
+            if tile['walkable']:
+                self.player_x = new_x
+                self.player_y = new_y
+                self.events.append(f'Moved to {tile["name"]}')
+
+                if tile_type == 'STAIRS_DOWN':
+                    self.dungeon_level += 1
+                    if self.dungeon_level > self.max_dungeon_level:
+                        self.exit_dungeon()
+                    else:
+                        self.generate_dungeon_level(self.dungeon_level)
+                elif tile_type == 'CHEST':
+                    self.open_chest(new_x, new_y)
+            else:
+                self.events.append(f'Cannot walk into {tile["name"]}')
+
+                if tile_type == 'CHEST':
+                    self.open_chest(new_x, new_y)
+
+    def open_chest(self, x, y):
+        # Randomly decide the loot
+        loot_type = random.choice(['gold', 'item'])
+        if loot_type == 'gold':
+            amount = random.randint(10, 50)
+            self.gold += amount
+            self.events.append(f'You found {amount} gold in the chest!')
+        else:
+            item = random.choice(ITEMS)
+            self.inventory.append(item)
+            self.events.append(f'You found a {item} in the chest!')
+
+        # Remove the chest from the map
+        self.local_map[y][x] = 'FLOOR'
+
+    def connect_rooms(self, dungeon_map, room1, room2):
+        # Get the center coordinates of both rooms
+        x1, y1 = room1.center_x(), room1.center_y()
+        x2, y2 = room2.center_x(), room2.center_y()
+
+        # Randomly decide whether to go horizontal first or vertical
+        if random.choice([True, False]):
+            # Horizontal then vertical
+            self.create_h_tunnel(dungeon_map, x1, x2, y1)
+            self.create_v_tunnel(dungeon_map, y1, y2, x2)
+        else:
+            # Vertical then horizontal
+            self.create_v_tunnel(dungeon_map, y1, y2, x1)
+            self.create_h_tunnel(dungeon_map, x1, x2, y2)
+
+
+    def exit_dungeon(self):
+        self.events.append('You have reached the end of the dungeon.')
+        # Transition to boss map or exit back to the world map
+        self.state = 'local_map'
+        # Return to the dungeon entrance location
+        self.player_x, self.player_y = self.dungeon_entrance_position
+        # Restore local map, entities, etc.
+
+    def spawn_dungeon_enemies(self):
+        num_enemies = random.randint(5, 10)
+        for _ in range(num_enemies):
+            while True:
+                x = random.randint(0, LOCAL_MAP_WIDTH - 1)
+                y = random.randint(0, LOCAL_MAP_HEIGHT - 1)
+                if self.local_map[y][x] == 'FLOOR' and (x != self.player_x or y != self.player_y):
+                    enemy_type = random.choice(['Goblin', 'Snake', 'Bat'])
+                    self.enemies.append(Enemy(x, y, enemy_type))
+                    break
+
 
     def move_entities(self):
         time_of_day = self.get_time_of_day()
@@ -557,33 +667,145 @@ class Game:
         new_x = self.player_x + dx
         new_y = self.player_y + dy
 
-        if 0 <= new_x < len(self.local_map[0]) and 0 <= new_y < len(self.local_map):
-            # Check for entities
-            for enemy in self.enemies:
-                if enemy.x == new_x and enemy.y == new_y:
-                    self.start_combat(enemy)
-                    return
-            for villager in self.villagers:
-                if villager.x == new_x and villager.y == new_y:
-                    self.trade_with_villager(villager)
-                    return
-            tile_type = self.local_map[new_y][new_x]
-            tile = TILES.get(tile_type, TILES['PLAIN'])
+        # Check for map boundaries
+        if new_x < 0:
+            # Move to the left cell
+            self.leave_region(-1, 0)
+            return
+        elif new_x >= LOCAL_MAP_WIDTH:
+            # Move to the right cell
+            self.leave_region(1, 0)
+            return
+        elif new_y < 0:
+            # Move to the upper cell
+            self.leave_region(0, -1)
+            return
+        elif new_y >= LOCAL_MAP_HEIGHT:
+            # Move to the lower cell
+            self.leave_region(0, 1)
+            return
 
-            if tile['walkable']:
-                self.player_x = new_x
-                self.player_y = new_y
-                self.events.append(f'Moved to {tile["name"]}')
-                if tile_type == 'DOOR':
-                    if self.map_stack:
-                        self.exit_building()
-                    else:
-                        self.enter_building()
-            else:
-                self.events.append(f'Cannot walk into {tile["name"]}')
+        tile_type = self.local_map[new_y][new_x]
+        tile = TILES.get(tile_type, TILES['PLAIN'])
+
+        if tile['walkable']:
+            self.player_x = new_x
+            self.player_y = new_y
+            self.events.append(f'Moved to {tile["name"]}')
+            # Handle interactions with enemies, items, etc.
         else:
-            # Player is attempting to move out of the local map; transition to adjacent cell
-            self.leave_region(dx, dy)
+            self.events.append(f'Cannot walk into {tile["name"]}')
+
+    def enter_dungeon(self):
+        self.events.append('You enter the dungeon.')
+        self.dungeon_level = 1
+        self.max_dungeon_level = random.randint(2, 5)
+        self.dungeon_maps = {}
+        self.generate_dungeon_level(self.dungeon_level)
+        self.state = 'dungeon'
+
+    def generate_dungeon_level(self, level):
+        if level in self.dungeon_maps:
+            # Load existing level
+            dungeon_data = self.dungeon_maps[level]
+            self.local_map = dungeon_data['map']
+            self.player_x = dungeon_data['player_x']
+            self.player_y = dungeon_data['player_y']
+            self.enemies = dungeon_data['enemies']
+        else:
+            # Generate new dungeon level
+            self.local_map = self.create_dungeon_map()
+            self.player_x, self.player_y = self.find_start_position()
+            self.enemies = []
+            self.spawn_dungeon_enemies()
+
+            # Place stairs if not last level
+            if level < self.max_dungeon_level:
+                stair_x, stair_y = self.place_stairs()
+                self.local_map[stair_y][stair_x] = 'STAIRS_DOWN'
+
+            # Save the dungeon level
+            self.dungeon_maps[level] = {
+                'map': self.local_map,
+                'player_x': self.player_x,
+                'player_y': self.player_y,
+                'enemies': self.enemies,
+            }
+
+
+    def create_dungeon_map(self):
+        dungeon_map = [['WALL' for _ in range(LOCAL_MAP_WIDTH)] for _ in range(LOCAL_MAP_HEIGHT)]
+        self.rooms = []  # Keep track of rooms
+        max_rooms = 10
+        room_min_size = 6
+        room_max_size = 12
+
+        for _ in range(max_rooms):
+            w = random.randint(room_min_size, room_max_size)
+            h = random.randint(room_min_size, room_max_size)
+            x = random.randint(1, LOCAL_MAP_WIDTH - w - 1)
+            y = random.randint(1, LOCAL_MAP_HEIGHT - h - 1)
+            new_room = Rect(x, y, w, h)
+
+            # Check for overlaps
+            failed = False
+            for other_room in self.rooms:
+                if new_room.intersect(other_room):
+                    failed = True
+                    break
+            if not failed:
+                # Create room
+                self.create_room(dungeon_map, new_room)
+                self.rooms.append(new_room)
+
+                # Connect to previous room
+                if len(self.rooms) > 1:
+                    prev_room = self.rooms[-2]
+                    self.connect_rooms(dungeon_map, prev_room, new_room)
+        self.place_chests()
+
+        return dungeon_map
+
+    def place_chests(self):
+        num_chests = random.randint(1, len(self.rooms) // 2)  # Up to half the rooms
+        chest_rooms = random.sample(self.rooms, num_chests)
+        for room in chest_rooms:
+            x = random.randint(room.x1 + 1, room.x2 - 1)
+            y = random.randint(room.y1 + 1, room.y2 - 1)
+            if self.local_map[y][x] == 'FLOOR':
+                self.local_map[y][x] = 'CHEST'
+
+
+
+    def create_room(self, dungeon_map, room):
+        for x in range(room.x1 + 1, room.x2):
+            for y in range(room.y1 + 1, room.y2):
+                dungeon_map[y][x] = 'FLOOR'
+
+    def create_h_tunnel(self, dungeon_map, x1, x2, y):
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            dungeon_map[y][x] = 'FLOOR'
+
+    def create_v_tunnel(self, dungeon_map, y1, y2, x):
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            dungeon_map[y][x] = 'FLOOR'
+
+    def find_start_position(self):
+        for y in range(LOCAL_MAP_HEIGHT):
+            for x in range(LOCAL_MAP_WIDTH):
+                if self.local_map[y][x] == 'FLOOR':
+                    return x, y
+        # Fallback if no floor found
+        return LOCAL_MAP_WIDTH // 2, LOCAL_MAP_HEIGHT // 2
+
+    def place_stairs(self):
+        # Choose a random room to place the stairs
+        room = random.choice(self.rooms)
+        x = random.randint(room.x1 + 1, room.x2 - 1)
+        y = random.randint(room.y1 + 1, room.y2 - 1)
+        self.local_map[y][x] = 'STAIRS_DOWN'
+        return x, y
+
 
     def leave_region(self, dx, dy):
         # Determine new cell coordinates
@@ -605,12 +827,14 @@ class Game:
 
         # Check if the new cell is within the world map bounds
         if 0 <= new_cell_x < WORLD_MAP_WIDTH and 0 <= new_cell_y < WORLD_MAP_HEIGHT:
+            # Before leaving, save the current cell's state
+            self.save_current_cell_state()
+
             # Update current cell
             self.current_cell = (new_cell_x, new_cell_y)
-            # Before leaving, store the current state
-            self.save_current_cell_state()
-            # Generate or load the new cell
-            self.generate_local_map(new_cell_x, new_cell_y, entrance_direction)
+
+            # Generate or load the local map for the new cell
+            self.local_map = self.generate_local_map(new_cell_x, new_cell_y, entrance_direction)
             self.events.append(f'Entered new region: {self.local_map_biome}')
         else:
             self.events.append('Cannot leave the world boundaries')
@@ -967,7 +1191,7 @@ class Game:
                     x, y = self.current_cell
                     rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
                     pygame.draw.rect(self.screen, YELLOW, rect, 2)
-            elif self.state == 'local_map':
+            elif self.state == 'local_map' or self.state == 'dungeon':
                 self.draw_local_map()
                 self.draw_panel()
             if self.command_mode:
@@ -1133,11 +1357,6 @@ class Game:
             y_offset += 20
             self.draw_text(self.screen, self.message, x_offset, y_offset, PANEL_TEXT)
             self.message = ''  # Clear message after displaying
-# Helper function for drawing text
-def draw_text(surface, text, x, y, color=WHITE, font_size=FONT_SIZE, font_name=FONT_NAME):
-    font = pygame.font.SysFont(font_name, font_size)
-    text_surface = font.render(text, True, color)
-    surface.blit(text_surface, (x, y))
 
 if __name__ == '__main__':
     game = Game()
