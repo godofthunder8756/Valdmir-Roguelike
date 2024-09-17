@@ -299,7 +299,6 @@ class Game:
             }
             return self.local_map
 
-
     def spawn_villagers(self, local_map):
         num_villagers = random.randint(3, 6)
         for _ in range(num_villagers):
